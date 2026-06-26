@@ -136,6 +136,18 @@ async def _do_download_and_send(
     try:
         await _send_media(update, result, header)
         await stats.record(link.platform)
+
+        # دکمه تشخیص آهنگ برای ویدیوها
+        has_video = any(it.kind == "video" for it in result.items)
+        if has_video and len(link.url) <= 58:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎵 تشخیص آهنگ", callback_data=f"music:{link.url}")
+            ]])
+            await update.effective_message.reply_text(
+                "می‌خوای بدونی چه آهنگیه؟ 🎵",
+                reply_markup=keyboard,
+            )
     except TelegramError as exc:
         log.error("Send failed for %s: %s", link.url, exc)
         await _safe_edit(status_msg, t("unknown_error"))
