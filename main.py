@@ -6,10 +6,7 @@ main.py
 """
 from __future__ import annotations
 
-import asyncio
-import signal
 import sys
-from typing import Any
 
 from telegram.ext import (
     Application,
@@ -42,9 +39,7 @@ log = get_logger("main")
 # مدیریت خطاهای گلوبال
 # ---------------------------------------------------------------------------
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """هندلر خطای مرکزی — خطاها را لاگ و در صورت امکان به کاربر اطلاع می‌دهد."""
     log.error("Unhandled exception while handling update:", exc_info=context.error)
-    # اطلاع به ادمین‌ها
     if config.ADMINS:
         err_text = f"⚠️ خطای غیرمنتظره:\n<code>{context.error}</code>"
         for admin_id in config.ADMINS:
@@ -52,7 +47,6 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await context.bot.send_message(admin_id, err_text, parse_mode="HTML")
             except Exception:
                 pass
-    # اطلاع به کاربر
     if update and hasattr(update, "effective_message") and update.effective_message:
         try:
             await update.effective_message.reply_text(
@@ -66,42 +60,43 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 # کارهای دوره‌ای
 # ---------------------------------------------------------------------------
 async def _periodic_cleanup(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """هر یک ساعت فایل‌های قدیمی دانلود را پاک می‌کند."""
     purge_old_downloads(max_age_seconds=3600)
+
+
+# ---------------------------------------------------------------------------
+# post_init — باید قبل از build_application تعریف شود
+# ---------------------------------------------------------------------------
+async def post_init(app: Application) -> None:
+    """اجرا پس از مقداردهی اولیه — بررسی اتصال به بات."""
+    me = await app.bot.get_me()
+    log.info("Connected as @%s (id=%s)", me.username, me.id)
 
 
 # ---------------------------------------------------------------------------
 # ساخت Application
 # ---------------------------------------------------------------------------
 def build_application() -> Application:
-    """ساخت و پیکربندی Application تلگرام با handlerها."""
     if not config.BOT_TOKEN:
         log.error("BOT_TOKEN تنظیم نشده! فایل .env را پر کنید.")
         sys.exit(1)
 
-    builder = ApplicationBuilder().token(config.BOT_TOKEN)
+    # post_init به ApplicationBuilder داده می‌شود، نه run_polling
+    builder = ApplicationBuilder().token(config.BOT_TOKEN).post_init(post_init)
 
-    # پراکسی
     if config.USE_PROXY and config.PROXY_URL:
         proxy = config.PROXY_URL
         log.info("Using proxy: %s", proxy)
-        if proxy.startswith("socks"):
-            builder = builder.proxy(proxy).get_updates_proxy(proxy)
-        else:
-            builder = builder.proxy(proxy).get_updates_proxy(proxy)
+        builder = builder.proxy(proxy).get_updates_proxy(proxy)
 
     app = builder.build()
 
-    # ----- ثبت handlerها -----
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("cancel", cancel_cmd))
 
-    # callback کیفیت
     app.add_handler(CallbackQueryHandler(quality_callback, pattern=r"^q:"))
 
-    # پیام‌های متنی که لینک دارند (هر پیامی که / نباشد)
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.Regex(r"https?://"),
@@ -109,10 +104,8 @@ def build_application() -> Application:
         )
     )
 
-    # خطای گلوبال
     app.add_error_handler(on_error)
 
-    # کار دوره‌ای پاک‌سازی (هر ۱ ساعت)
     if app.job_queue is not None:
         app.job_queue.run_repeating(
             _periodic_cleanup, interval=3600, first=60, name="cleanup"
@@ -125,12 +118,6 @@ def build_application() -> Application:
 # ---------------------------------------------------------------------------
 # ورودی اصلی
 # ---------------------------------------------------------------------------
-async def post_init(app: Application) -> None:
-    """اجرا پس از مقداردهی اولیه — بررسی اتصال به بات."""
-    me = await app.bot.get_me()
-    log.info("Connected as @%s (id=%s)", me.username, me.id)
-
-
 def main() -> None:
     setup_logging()
     log.info("=== Starting Telegram Media Downloader Bot ===")
@@ -139,13 +126,11 @@ def main() -> None:
 
     app = build_application()
 
-    # مدیریت سیگنال برای خروج تمیز (پایتون روی ویندوز: محدودیت‌هایی دارد)
     app.run_polling(
         allowed_updates=None,
         poll_interval=2.0,
         timeout=30,
         drop_pending_updates=False,
-        post_init=post_init,
     )
 
 
