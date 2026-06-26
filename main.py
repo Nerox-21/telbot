@@ -31,6 +31,10 @@ from tg_downloader_bot.handlers.download import (
     handle_message,
     quality_callback,
 )
+from tg_downloader_bot.handlers.music import (
+    handle_music_command,
+    music_detect_callback,
+)
 
 log = get_logger("main")
 
@@ -96,6 +100,11 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("cancel", cancel_cmd))
 
     app.add_handler(CallbackQueryHandler(quality_callback, pattern=r"^q:"))
+
+    # دستورات تشخیص آهنگ
+    app.add_handler(CommandHandler("music", handle_music_command))
+    app.add_handler(CommandHandler("shazam", handle_music_command))
+    app.add_handler(CallbackQueryHandler(music_detect_callback, pattern=r"^music:"))
 
     app.add_handler(
         MessageHandler(
