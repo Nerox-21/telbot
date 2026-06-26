@@ -5,6 +5,7 @@ handlers/download.py
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from telegram import (
@@ -46,13 +47,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     text = update.message.text
 
-    # --- Rate limiting ---
     decision = rate_limiter.check(user.id)
     if not decision.allowed:
         await update.message.reply_text(t("rate_limited", sec=decision.retry_after))
         return
 
-    # --- استخراج لینک‌ها ---
     links = parse_message_links(text, limit=config.MAX_LINKS_PER_MESSAGE)
     if not links:
         await update.message.reply_text(t("no_links"))
@@ -62,7 +61,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if raw_count > config.MAX_LINKS_PER_MESSAGE and len(links) >= config.MAX_LINKS_PER_MESSAGE:
         await update.message.reply_text(t("too_many_links", max=config.MAX_LINKS_PER_MESSAGE))
 
-    # ذخیره لینک‌ها و پرسیدن سوال
     context.user_data["pending_links"] = [{"url": l.url, "platform": l.platform} for l in links]
 
     keyboard = InlineKeyboardMarkup([
@@ -97,7 +95,7 @@ async def music_choice_callback(update: Update, context: ContextTypes.DEFAULT_TY
     want_music = query.data == "music:yes"
 
     if want_music:
-        await query.edit_message_text("🎵 در حال پیدا کردن آهنگ...")
+        await query.edit_message_text("⏳ لطفاً صبر کن...")
         status_msg = query.message
         for link in links:
             await _process_music(update, context, link, status_msg)
@@ -122,22 +120,27 @@ async def _process_music(
     link: ParsedLink,
     status_msg,
 ) -> None:
-    """دانلود ویدیو، شناسایی آهنگ و ارسال موزیک."""
     try:
-        await status_msg.edit_text("⬇️ در حال دانلود ویدیو برای تشخیص آهنگ...")
+        await status_msg.edit_text("⬇️ در حال دانلود برای تشخیص آهنگ...")
     except TelegramError:
         pass
 
-    # دانلود ویدیو
-    result = await downloader.download(
-        url=link.url,
-        platform=link.platform,
-        progress_message=None,
-        format_selector=None,
-    )
+    try:
+        result = await asyncio.wait_for(
+            downloader.download(
+                url=link.url,
+                platform=link.platform,
+                progress_message=None,
+                format_selector="worstvideo[ext=mp4]/worst",
+            ),
+            timeout=60.0
+        )
+    except asyncio.TimeoutError:
+        await _safe_edit(status_msg, "❌ دانلود خیلی طول کشید. لطفاً دوباره امتحان کن.")
+        return
 
     if not result.success or not result.items:
-        await _safe_edit(status_msg, "❌ دانلود ویدیو برای تشخیص آهنگ ناموفق بود.")
+        await _safe_edit(status_msg, "❌ دانلود برای تشخیص آهنگ ناموفق بود.")
         return
 
     video_path = result.items[0].path
@@ -147,12 +150,11 @@ async def _process_music(
     except TelegramError:
         pass
 
-    # شناسایی آهنگ
     song_info = await find_song(video_path)
     result.cleanup()
 
     if not song_info:
-        await _safe_edit(status_msg, "❌ آهنگی شناسایی نشد. شاید ویدیو موزیک نداره یا صدا واضح نیست.")
+        await _safe_edit(status_msg, "❌ آهنگی شناسایی نشد.")
         return
 
     try:
@@ -165,7 +167,6 @@ async def _process_music(
     except TelegramError:
         pass
 
-    # دانلود آهنگ
     music_path, tmp_dir = await search_and_download_song(
         song_info["artist"], song_info["title"]
     )
@@ -179,7 +180,6 @@ async def _process_music(
         )
         return
 
-    # ارسال موزیک
     try:
         await status_msg.edit_text("📤 در حال ارسال آهنگ...")
     except TelegramError:
@@ -382,6 +382,5 @@ def _fmt_size(num: int) -> str:
     return f"{num:.1f}TB"
 
 
-# برای سازگاری با main.py
 async def quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pass
