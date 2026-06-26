@@ -70,6 +70,7 @@ def _humanize_size(num: float) -> str:
 
 
 def _check_ffmpeg() -> bool:
+    """بررسی وجود ffmpeg"""
     import shutil as sh
     return sh.which("ffmpeg") is not None
 
@@ -102,6 +103,7 @@ def _build_ydl_opts(
     }
 
     if has_ffmpeg:
+        # اگر ffmpeg هست: بهترین کیفیت با ادغام
         opts["merge_output_format"] = "mp4"
         opts["postprocessors"] = [
             {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
@@ -109,9 +111,9 @@ def _build_ydl_opts(
         if format_selector:
             opts["format"] = format_selector
         else:
-            # اول mp4+m4a را امتحان می‌کند، اگر نبود بهترین را می‌گیرد و تبدیل می‌کند
-            opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+            opts["format"] = config.YTDLP_FORMAT
     else:
+        # بدون ffmpeg: بهترین فرمت single-file که نیاز به ادغام نداره
         log.warning("ffmpeg not found — using single-file format fallback")
         opts["format"] = "best[ext=mp4]/best"
 
