@@ -83,13 +83,21 @@ async def _process_one(
     status_msg,
     header: str,
 ) -> None:
-    """پردازش یک لینک و دانلود با بهترین کیفیت."""
+    """پردازش یک لینک و دانلود با بهترین کیفیت به صورت خودکار."""
     try:
         await status_msg.edit_text(f"{header} {t('downloading', platform=link.platform)}")
     except TelegramError:
         pass
 
     await _do_download_and_send(update, context, link, status_msg, header, format_selector=None)
+
+
+# ---------------------------------------------------------------------------
+# تابع خالی برای سازگاری با main.py
+# ---------------------------------------------------------------------------
+async def quality_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """این تابع دیگر استفاده نمی‌شود ولی برای جلوگیری از خطای import نگه داشته شده."""
+    pass
 
 
 # ---------------------------------------------------------------------------
