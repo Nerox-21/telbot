@@ -1,0 +1,14 @@
+# Telegram framework (v21+ async)
+python-telegram-bot[ext]==21.6
+
+# Core downloader engine
+yt-dlp>=2024.8.6
+
+# Env management
+python-dotenv==1.0.1
+
+# Optional: proxy support (SOCKS5/HTTP) for both telegram client & yt-dlp
+PySocks==1.7.1
+
+# Optional: better progress / humanize
+humanize==4.10.0
