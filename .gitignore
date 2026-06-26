@@ -1,0 +1,36 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual env ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Env / secrets ---
+.env
+.env.local
+*.secret
+
+# --- Data & logs ---
+data/*.json
+logs/*.log*
+downloads/
+
+# --- Cookies ---
+cookies.txt
+*.cookies
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
