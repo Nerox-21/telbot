@@ -120,6 +120,15 @@ async def _process_music(
     link: ParsedLink,
     status_msg,
 ) -> None:
+    # یوتیوب پشتیبانی نمی‌شود
+    if "youtube.com" in link.url or "youtu.be" in link.url:
+        await _safe_edit(
+            status_msg,
+            "⚠️ تشخیص آهنگ از یوتیوب پشتیبانی نمی‌شود.\n"
+            "لطفاً لینک اینستاگرام یا TikTok بفرست."
+        )
+        return
+
     try:
         await status_msg.edit_text("⬇️ در حال دانلود برای تشخیص آهنگ...")
     except TelegramError:
@@ -131,7 +140,7 @@ async def _process_music(
                 url=link.url,
                 platform=link.platform,
                 progress_message=None,
-                format_selector="worstvideo[ext=mp4]/worst",
+                format_selector="best[height<=480][ext=mp4]/best[height<=480]/best",
             ),
             timeout=60.0
         )
@@ -154,7 +163,7 @@ async def _process_music(
     result.cleanup()
 
     if not song_info:
-        await _safe_edit(status_msg, "❌ آهنگی شناسایی نشد.")
+        await _safe_edit(status_msg, "❌ آهنگی شناسایی نشد. شاید ویدیو موزیک نداره یا صدا واضح نیست.")
         return
 
     try:
