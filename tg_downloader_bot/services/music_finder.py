@@ -6,6 +6,7 @@ services/music_finder.py
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 from shazamio import Shazam
@@ -17,8 +18,33 @@ log = get_logger("music_finder")
 
 async def find_song(video_path: Path) -> dict | None:
     try:
+        # اول صدا را با ffmpeg جدا می‌کنیم
+        audio_path = video_path.with_suffix(".wav")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", str(video_path),
+                    "-t", "30",          # فقط ۳۰ ثانیه اول
+                    "-ar", "44100",      # sample rate استاندارد
+                    "-ac", "1",          # mono
+                    "-f", "wav",
+                    str(audio_path),
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+        except Exception as exc:
+            log.warning("ffmpeg audio extract failed: %s", exc)
+            audio_path = video_path  # اگر ffmpeg فیل کرد، مستقیم ویدیو را بده
+
+        # حالا shazam را اجرا کن
         shazam = Shazam()
-        result = await shazam.recognize(str(video_path))
+        result = await shazam.recognize(str(audio_path))
+
+        # پاک کردن فایل موقت
+        if audio_path != video_path and audio_path.exists():
+            audio_path.unlink()
 
         if not result or "track" not in result:
             return None
@@ -43,7 +69,6 @@ async def search_and_download_song(artist: str, title: str):
     import yt_dlp
     from tg_downloader_bot.utils.files import make_temp_dir
 
-    # جستجو در یوتیوب ولی فقط صدا
     query = f"ytsearch1:{artist} {title} official audio"
     tmp = make_temp_dir(prefix="music_")
 
@@ -53,7 +78,6 @@ async def search_and_download_song(artist: str, title: str):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        # فقط ۱۰ دقیقه timeout
         "socket_timeout": 30,
         "postprocessors": [
             {
@@ -71,7 +95,6 @@ async def search_and_download_song(artist: str, title: str):
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([query])
 
-        # حداکثر ۶۰ ثانیه منتظر می‌مانیم
         await asyncio.wait_for(
             loop.run_in_executor(None, _download),
             timeout=60.0
