@@ -1,8 +1,7 @@
 """
 main.py
 =======
-نقطه ورود ربات. راه‌اندازی Application تلگرام، ثبت handlerها، تنظیم پراکسی
-و شروع polling طولانی‌مدت.
+نقطه ورود ربات.
 """
 from __future__ import annotations
 
@@ -29,21 +28,15 @@ from tg_downloader_bot.handlers.basic import (
 )
 from tg_downloader_bot.handlers.download import (
     handle_message,
+    music_choice_callback,
     quality_callback,
-)
-from tg_downloader_bot.handlers.music import (
-    handle_music_command,
-    music_detect_callback,
 )
 
 log = get_logger("main")
 
 
-# ---------------------------------------------------------------------------
-# مدیریت خطاهای گلوبال
-# ---------------------------------------------------------------------------
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    log.error("Unhandled exception while handling update:", exc_info=context.error)
+    log.error("Unhandled exception:", exc_info=context.error)
     if config.ADMINS:
         err_text = f"⚠️ خطای غیرمنتظره:\n<code>{context.error}</code>"
         for admin_id in config.ADMINS:
@@ -53,38 +46,25 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
                 pass
     if update and hasattr(update, "effective_message") and update.effective_message:
         try:
-            await update.effective_message.reply_text(
-                "⚠️ خطایی رخ داد. لطفاً دوباره تلاش کنید."
-            )
+            await update.effective_message.reply_text("⚠️ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
         except Exception:
             pass
 
 
-# ---------------------------------------------------------------------------
-# کارهای دوره‌ای
-# ---------------------------------------------------------------------------
 async def _periodic_cleanup(context: ContextTypes.DEFAULT_TYPE) -> None:
     purge_old_downloads(max_age_seconds=3600)
 
 
-# ---------------------------------------------------------------------------
-# post_init — باید قبل از build_application تعریف شود
-# ---------------------------------------------------------------------------
 async def post_init(app: Application) -> None:
-    """اجرا پس از مقداردهی اولیه — بررسی اتصال به بات."""
     me = await app.bot.get_me()
     log.info("Connected as @%s (id=%s)", me.username, me.id)
 
 
-# ---------------------------------------------------------------------------
-# ساخت Application
-# ---------------------------------------------------------------------------
 def build_application() -> Application:
     if not config.BOT_TOKEN:
-        log.error("BOT_TOKEN تنظیم نشده! فایل .env را پر کنید.")
+        log.error("BOT_TOKEN تنظیم نشده!")
         sys.exit(1)
 
-    # post_init به ApplicationBuilder داده می‌شود، نه run_polling
     builder = ApplicationBuilder().token(config.BOT_TOKEN).post_init(post_init)
 
     if config.USE_PROXY and config.PROXY_URL:
@@ -99,12 +79,10 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("cancel", cancel_cmd))
 
+    # callback دکمه‌های موزیک
+    app.add_handler(CallbackQueryHandler(music_choice_callback, pattern=r"^music:"))
+    # callback کیفیت (برای سازگاری)
     app.add_handler(CallbackQueryHandler(quality_callback, pattern=r"^q:"))
-
-    # دستورات تشخیص آهنگ
-    app.add_handler(CommandHandler("music", handle_music_command))
-    app.add_handler(CommandHandler("shazam", handle_music_command))
-    app.add_handler(CallbackQueryHandler(music_detect_callback, pattern=r"^music:"))
 
     app.add_handler(
         MessageHandler(
@@ -124,9 +102,6 @@ def build_application() -> Application:
     return app
 
 
-# ---------------------------------------------------------------------------
-# ورودی اصلی
-# ---------------------------------------------------------------------------
 def main() -> None:
     setup_logging()
     log.info("=== Starting Telegram Media Downloader Bot ===")
@@ -134,7 +109,6 @@ def main() -> None:
              config.MAX_FILE_SIZE_MB, config.MAX_LINKS_PER_MESSAGE)
 
     app = build_application()
-
     app.run_polling(
         allowed_updates=None,
         poll_interval=2.0,
