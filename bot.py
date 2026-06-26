@@ -2,16 +2,12 @@ import os
 import re
 import logging
 import requests
-import instaloader
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ContextTypes, filters
 )
 
-# ─────────────────────────────────────────
-#  تنظیمات
-# ─────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8634441121:AAGgnPJSphEihGPTkgYAOduOiQS2zlotKp4")
 
 logging.basicConfig(
@@ -20,18 +16,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-L = instaloader.Instaloader(
-    download_video_thumbnails=False,
-    save_metadata=False,
-    download_geotags=False,
-    download_comments=False,
-    post_metadata_txt_pattern="",
-    quiet=True,
-)
-
-# ─────────────────────────────────────────
-#  ابزار
-# ─────────────────────────────────────────
 INSTAGRAM_REGEX = re.compile(
     r"(https?://)?(www\.)?instagram\.com/(p|reel|tv)/([A-Za-z0-9_\-]+)"
 )
@@ -40,22 +24,72 @@ def extract_shortcode(url: str) -> str | None:
     m = INSTAGRAM_REGEX.search(url)
     return m.group(4) if m else None
 
-def cleanup(directory: str):
-    """پاک‌کردن فایل‌های موقت"""
-    for f in os.listdir(directory):
-        path = os.path.join(directory, f)
-        try:
-            os.remove(path)
-        except Exception:
-            pass
+def get_media_info(url: str) -> dict | None:
+    """استفاده از RapidAPI برای دریافت لینک مستقیم"""
     try:
-        os.rmdir(directory)
-    except Exception:
-        pass
+        api_url = "https://instagram-downloader-download-instagram-videos-stories.p.rapidapi.com/index"
+        headers = {
+            "x-rapidapi-host": "instagram-downloader-download-instagram-videos-stories.p.rapidapi.com",
+            "x-rapidapi-key": os.environ.get("RAPIDAPI_KEY", "")
+        }
+        params = {"url": url}
+        response = requests.get(api_url, headers=headers, params=params, timeout=30)
+        data = response.json()
+        return data
+    except Exception as e:
+        logger.error(f"API error: {e}")
+        return None
 
-# ─────────────────────────────────────────
-#  هندلرها
-# ─────────────────────────────────────────
+def get_media_snapinsta(url: str):
+    """استفاده از snapinsta به عنوان روش جایگزین"""
+    try:
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        # گرفتن token
+        r = session.get("https://snapinsta.app/", timeout=15)
+        token_match = re.search(r'name="_token"\s+value="([^"]+)"', r.text)
+        if not token_match:
+            return None
+        token = token_match.group(1)
+
+        # ارسال لینک
+        r2 = session.post(
+            "https://snapinsta.app/action.php",
+            data={"url": url, "_token": token, "q": url, "t": "media"},
+            timeout=30
+        )
+        data = r2.json()
+        return data
+    except Exception as e:
+        logger.error(f"Snapinsta error: {e}")
+        return None
+
+def get_direct_url_via_cobalt(url: str) -> str | None:
+    """استفاده از cobalt.tools API"""
+    try:
+        r = requests.post(
+            "https://api.cobalt.tools/",
+            json={"url": url, "downloadMode": "auto"},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            timeout=30
+        )
+        data = r.json()
+        logger.info(f"Cobalt response: {data}")
+        if data.get("status") in ("tunnel", "redirect", "stream"):
+            return data.get("url")
+        if data.get("status") == "picker":
+            # چند رسانه‌ای
+            return [item["url"] for item in data.get("picker", [])]
+        return None
+    except Exception as e:
+        logger.error(f"Cobalt error: {e}")
+        return None
+
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = (
         "👋 سلام!\n\n"
@@ -70,8 +104,7 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = (
         "📖 راهنما:\n\n"
         "• لینک پست عکس یا ویدیو اینستاگرام رو بفرست\n"
-        "• فقط پست‌های عمومی قابل دانلوده\n"
-        "• برای پست‌های چند رسانه‌ای (carousel) همه فایل‌ها فرستاده می‌شن\n\n"
+        "• فقط پست‌های عمومی قابل دانلوده\n\n"
         "📌 دستورات:\n"
         "/start – شروع\n"
         "/help  – راهنما"
@@ -80,75 +113,49 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    shortcode = extract_shortcode(url)
 
-    if not shortcode:
-        await update.message.reply_text("❌ لینک اینستاگرام معتبر نیست. لطفاً یه لینک درست بفرست.")
+    if not INSTAGRAM_REGEX.search(url):
+        await update.message.reply_text("❌ لینک اینستاگرام معتبر نیست.")
         return
 
     msg = await update.message.reply_text("⏳ در حال دانلود...")
 
-    tmp_dir = f"ig_tmp_{shortcode}"
-    os.makedirs(tmp_dir, exist_ok=True)
-
     try:
-        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        result = get_direct_url_via_cobalt(url)
 
-        # پست چند رسانه‌ای
-        if post.typename == "GraphSidecar":
-            nodes = list(post.get_sidecar_nodes())
-            await msg.edit_text(f"⏳ {len(nodes)} فایل پیدا شد، در حال ارسال...")
-            for i, node in enumerate(nodes, 1):
-                media_url = node.video_url if node.is_video else node.display_url
-                data = requests.get(media_url, timeout=30).content
-                path = os.path.join(tmp_dir, f"media_{i}.{'mp4' if node.is_video else 'jpg'}")
-                with open(path, "wb") as f:
-                    f.write(data)
-                with open(path, "rb") as f:
-                    if node.is_video:
-                        await update.message.reply_video(f, caption=f"🎬 ویدیو {i} از {len(nodes)}")
-                    else:
-                        await update.message.reply_photo(f, caption=f"📸 عکس {i} از {len(nodes)}")
+        if not result:
+            await msg.edit_text("❌ خطا در دانلود. ممکنه پست خصوصی باشه یا لینک اشتباه.")
+            return
 
-        # ویدیو / ریل
-        elif post.is_video:
-            data = requests.get(post.video_url, timeout=60).content
-            path = os.path.join(tmp_dir, "video.mp4")
-            with open(path, "wb") as f:
-                f.write(data)
-            caption = f"🎬 {post.caption[:200] if post.caption else ''}"
-            with open(path, "rb") as f:
-                await update.message.reply_video(f, caption=caption)
+        # چند رسانه‌ای
+        if isinstance(result, list):
+            await msg.edit_text(f"⏳ {len(result)} فایل پیدا شد، در حال ارسال...")
+            for i, media_url in enumerate(result, 1):
+                data = requests.get(media_url, timeout=60).content
+                content_type = requests.head(media_url).headers.get("content-type", "")
+                if "video" in content_type:
+                    await update.message.reply_video(data, caption=f"🎬 {i} از {len(result)}")
+                else:
+                    await update.message.reply_photo(data, caption=f"📸 {i} از {len(result)}")
+            await msg.delete()
+            return
 
-        # عکس تکی
+        # تک فایل - تشخیص نوع
+        head = requests.head(result, timeout=15)
+        content_type = head.headers.get("content-type", "")
+        data = requests.get(result, timeout=60).content
+
+        if "video" in content_type:
+            await update.message.reply_video(data, caption="🎬")
         else:
-            data = requests.get(post.url, timeout=30).content
-            path = os.path.join(tmp_dir, "photo.jpg")
-            with open(path, "wb") as f:
-                f.write(data)
-            caption = f"📸 {post.caption[:200] if post.caption else ''}"
-            with open(path, "rb") as f:
-                await update.message.reply_photo(f, caption=caption)
+            await update.message.reply_photo(data, caption="📸")
 
         await msg.delete()
 
-    except instaloader.exceptions.LoginRequiredException:
-        await msg.edit_text("🔒 این پست خصوصی‌ه یا نیاز به لاگین داره. فقط پست‌های عمومی رو می‌تونم دانلود کنم.")
-    except instaloader.exceptions.InstaloaderException as e:
-        logger.error(f"Instaloader error: {e}")
-        await msg.edit_text("❌ خطا در دانلود. مطمئن شو لینک درسته و پست عمومیه.")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Request error: {e}")
-        await msg.edit_text("❌ خطا در اتصال به اینستاگرام. دوباره امتحان کن.")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        await msg.edit_text("❌ یه خطای غیرمنتظره پیش اومد. دوباره امتحان کن.")
-    finally:
-        cleanup(tmp_dir)
+        await msg.edit_text("❌ خطای غیرمنتظره. دوباره امتحان کن.")
 
-# ─────────────────────────────────────────
-#  اجرا
-# ─────────────────────────────────────────
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
