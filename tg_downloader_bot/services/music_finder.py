@@ -79,19 +79,51 @@ async def find_song(video_path: Path) -> dict | None:
 
 
 async def search_and_download_song(artist: str, title: str):
-    import yt_dlp
     from tg_downloader_bot.utils.files import make_temp_dir
 
     tmp = make_temp_dir(prefix="music_")
 
-    # اول SoundCloud، بعد یوتیوب به عنوان fallback
-    queries = [
-        f"scsearch1:{artist} {title}",
-        f"ytsearch1:{artist} {title} audio",
-    ]
+    try:
+        loop = asyncio.get_running_loop()
+
+        def _download():
+            subprocess.run(
+                [
+                    "spotdl",
+                    f"{artist} {title}",
+                    "--output", str(tmp),
+                    "--format", "mp3",
+                    "--bitrate", "192k",
+                ],
+                capture_output=True,
+                timeout=60,
+            )
+
+        await asyncio.wait_for(
+            loop.run_in_executor(None, _download),
+            timeout=70.0
+        )
+
+        files = list(tmp.glob("*.mp3"))
+        if files:
+            return str(files[0]), tmp
+
+        # اگر spotdl فیل کرد، SoundCloud امتحان کن
+        log.warning("spotdl failed, trying SoundCloud...")
+        return await _download_from_soundcloud(artist, title, tmp)
+
+    except Exception as exc:
+        log.error("spotdl failed: %s", exc)
+        return await _download_from_soundcloud(artist, title, tmp)
+
+
+async def _download_from_soundcloud(artist: str, title: str, tmp: Path):
+    import yt_dlp
+
+    query = f"scsearch1:{artist} {title}"
 
     opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "bestaudio/best",
         "outtmpl": str(tmp / "%(title)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
@@ -106,29 +138,23 @@ async def search_and_download_song(artist: str, title: str):
         ],
     }
 
-    loop = asyncio.get_running_loop()
+    try:
+        loop = asyncio.get_running_loop()
 
-    for query in queries:
-        try:
-            def _download(q=query):
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.download([q])
+        def _download():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([query])
 
-            await asyncio.wait_for(
-                loop.run_in_executor(None, _download),
-                timeout=60.0
-            )
+        await asyncio.wait_for(
+            loop.run_in_executor(None, _download),
+            timeout=60.0
+        )
 
-            files = list(tmp.glob("*.mp3"))
-            if files:
-                return str(files[0]), tmp
+        files = list(tmp.glob("*.mp3"))
+        if files:
+            return str(files[0]), tmp
+        return None, tmp
 
-        except asyncio.TimeoutError:
-            log.warning("Download timed out for query: %s", query)
-            continue
-        except Exception as exc:
-            log.warning("Download failed for query %s: %s", query, exc)
-            continue
-
-    log.error("All download sources failed")
-    return None, tmp
+    except Exception as exc:
+        log.error("SoundCloud download failed: %s", exc)
+        return None, tmp
