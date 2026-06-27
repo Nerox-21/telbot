@@ -47,7 +47,11 @@ async def find_song(video_path: Path) -> dict | None:
                 data.add_field("return", "apple_music,spotify")
                 data.add_field("file", f, filename="audio.mp3", content_type="audio/mpeg")
 
-                async with session.post("https://api.audd.io/", data=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.post(
+                    "https://api.audd.io/",
+                    data=data,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
                     result = await resp.json()
 
         # پاک کردن فایل موقت
@@ -78,8 +82,12 @@ async def search_and_download_song(artist: str, title: str):
     import yt_dlp
     from tg_downloader_bot.utils.files import make_temp_dir
 
-    query = f"ytsearch1:{artist} {title} official audio"
     tmp = make_temp_dir(prefix="music_")
+
+    queries = [
+        f"scsearch1:{artist} {title}",
+        f"ytsearch1:{artist} {title} audio",
+    ]
 
     opts = {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
@@ -97,26 +105,29 @@ async def search_and_download_song(artist: str, title: str):
         ],
     }
 
-    try:
-        loop = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
 
-        def _download():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([query])
+    for query in queries:
+        try:
+            def _download(q=query):
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([q])
 
-        await asyncio.wait_for(
-            loop.run_in_executor(None, _download),
-            timeout=60.0
-        )
+            await asyncio.wait_for(
+                loop.run_in_executor(None, _download),
+                timeout=60.0
+            )
 
-        files = list(tmp.glob("*.mp3"))
-        if files:
-            return str(files[0]), tmp
-        return None, tmp
+            files = list(tmp.glob("*.mp3"))
+            if files:
+                return str(files[0]), tmp
 
-    except asyncio.TimeoutError:
-        log.error("Music download timed out")
-        return None, tmp
-    except Exception as exc:
-        log.error("Music download failed: %s", exc)
-        return None, tmp
+        except asyncio.TimeoutError:
+            log.warning("Download timed out for query: %s", query)
+            continue
+        except Exception as exc:
+            log.warning("Download failed for query %s: %s", query, exc)
+            continue
+
+    log.error("All download sources failed")
+    return None, tmp
