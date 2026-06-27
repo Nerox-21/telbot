@@ -47,11 +47,7 @@ async def find_song(video_path: Path) -> dict | None:
                 data.add_field("return", "apple_music,spotify")
                 data.add_field("file", f, filename="audio.mp3", content_type="audio/mpeg")
 
-                async with session.post(
-                    "https://api.audd.io/",
-                    data=data,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
+                async with session.post("https://api.audd.io/", data=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                     result = await resp.json()
 
         # پاک کردن فایل موقت
@@ -79,51 +75,14 @@ async def find_song(video_path: Path) -> dict | None:
 
 
 async def search_and_download_song(artist: str, title: str):
+    import yt_dlp
     from tg_downloader_bot.utils.files import make_temp_dir
 
+    query = f"ytsearch1:{artist} {title} official audio"
     tmp = make_temp_dir(prefix="music_")
 
-    try:
-        loop = asyncio.get_running_loop()
-
-        def _download():
-            subprocess.run(
-                [
-                    "spotdl",
-                    f"{artist} {title}",
-                    "--output", str(tmp),
-                    "--format", "mp3",
-                    "--bitrate", "192k",
-                ],
-                capture_output=True,
-                timeout=60,
-            )
-
-        await asyncio.wait_for(
-            loop.run_in_executor(None, _download),
-            timeout=70.0
-        )
-
-        files = list(tmp.glob("*.mp3"))
-        if files:
-            return str(files[0]), tmp
-
-        # اگر spotdl فیل کرد، SoundCloud امتحان کن
-        log.warning("spotdl failed, trying SoundCloud...")
-        return await _download_from_soundcloud(artist, title, tmp)
-
-    except Exception as exc:
-        log.error("spotdl failed: %s", exc)
-        return await _download_from_soundcloud(artist, title, tmp)
-
-
-async def _download_from_soundcloud(artist: str, title: str, tmp: Path):
-    import yt_dlp
-
-    query = f"scsearch1:{artist} {title}"
-
     opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": str(tmp / "%(title)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
@@ -155,6 +114,9 @@ async def _download_from_soundcloud(artist: str, title: str, tmp: Path):
             return str(files[0]), tmp
         return None, tmp
 
+    except asyncio.TimeoutError:
+        log.error("Music download timed out")
+        return None, tmp
     except Exception as exc:
-        log.error("SoundCloud download failed: %s", exc)
+        log.error("Music download failed: %s", exc)
         return None, tmp
