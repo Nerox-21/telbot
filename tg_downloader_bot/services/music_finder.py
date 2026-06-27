@@ -1,57 +1,66 @@
 """
 services/music_finder.py
 ========================
-شناسایی آهنگ از فایل ویدیویی با استفاده از shazamio.
+شناسایی آهنگ از فایل ویدیویی با استفاده از AudD API.
 """
 from __future__ import annotations
 
 import asyncio
 import subprocess
+import aiohttp
 from pathlib import Path
-
-from shazamio import Shazam
 
 from tg_downloader_bot.utils.logger import get_logger
 
 log = get_logger("music_finder")
 
+AUDD_API_TOKEN = "06552c7300801346f22e53984852107e"
+
 
 async def find_song(video_path: Path) -> dict | None:
     try:
-        # اول صدا را با ffmpeg جدا می‌کنیم
-        audio_path = video_path.with_suffix(".wav")
+        # استخراج صدا با ffmpeg
+        audio_path = video_path.with_suffix(".mp3")
         try:
             subprocess.run(
                 [
                     "ffmpeg", "-y",
                     "-i", str(video_path),
-                    "-t", "30",          # فقط ۳۰ ثانیه اول
-                    "-ar", "44100",      # sample rate استاندارد
-                    "-ac", "1",          # mono
-                    "-f", "wav",
+                    "-t", "30",
+                    "-ar", "44100",
+                    "-ac", "1",
+                    "-f", "mp3",
                     str(audio_path),
                 ],
                 capture_output=True,
                 timeout=30,
             )
         except Exception as exc:
-            log.warning("ffmpeg audio extract failed: %s", exc)
-            audio_path = video_path  # اگر ffmpeg فیل کرد، مستقیم ویدیو را بده
+            log.warning("ffmpeg extract failed: %s", exc)
+            audio_path = video_path
 
-        # حالا shazam را اجرا کن
-        shazam = Shazam()
-        result = await shazam.recognize(str(audio_path))
+        # ارسال به AudD
+        async with aiohttp.ClientSession() as session:
+            with open(audio_path, "rb") as f:
+                data = aiohttp.FormData()
+                data.add_field("api_token", AUDD_API_TOKEN)
+                data.add_field("return", "apple_music,spotify")
+                data.add_field("file", f, filename="audio.mp3", content_type="audio/mpeg")
+
+                async with session.post("https://api.audd.io/", data=data, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    result = await resp.json()
 
         # پاک کردن فایل موقت
         if audio_path != video_path and audio_path.exists():
             audio_path.unlink()
 
-        if not result or "track" not in result:
+        if not result or result.get("status") != "success" or not result.get("result"):
+            log.warning("AudD returned no result: %s", result)
             return None
 
-        track = result["track"]
+        track = result["result"]
         title = track.get("title", "نامشخص")
-        artist = track.get("subtitle", "نامشخص")
+        artist = track.get("artist", "نامشخص")
 
         log.info("Song identified: %s - %s", artist, title)
         return {
